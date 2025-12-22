@@ -78,12 +78,7 @@ jobs:
           )
 
           for LABEL in "${!LABEL_COLORS[@]}"; do
-            if ! gh label list \
-              --repo "$REPO" \
-              --search "$LABEL" \
-              --json name \
-              --jq '.[].name' | grep -qx "$LABEL"; then
-
+            if ! gh label list --repo "$REPO" --search "$LABEL" --json name --jq '.[].name' | grep -qx "$LABEL"; then
               gh label create "$LABEL" \
                 --repo "$REPO" \
                 --color "${LABEL_COLORS[$LABEL]}" \
@@ -108,38 +103,27 @@ jobs:
 
             LABELS="nws-alert"
 
-            case "$EVENT" in
-              "Tornado Warning")
-                LABELS="$LABELS,tornado-warning"
-                ;;
-              "Severe Thunderstorm Warning")
-                LABELS="$LABELS,severe-warning"
-                ;;
-              "Tornado Watch")
-                LABELS="$LABELS,tornado-watch"
-                ;;
-              "Severe Thunderstorm Watch")
-                LABELS="$LABELS,severe-watch"
-                ;;
-              "Winter Storm Warning")
-                LABELS="$LABELS,winter,winter-storm-warning"
-                ;;
-              "Winter Storm Watch")
-                LABELS="$LABELS,winter,winter-storm-watch"
-                ;;
-              "Winter Weather Advisory")
-                LABELS="$LABELS,winter,winter-weather-advisory"
-                ;;
-              "Blizzard Warning")
-                LABELS="$LABELS,winter,blizzard"
-                ;;
-              "Ice Storm Warning")
-                LABELS="$LABELS,winter,ice-storm"
-                ;;
-              "Snow Squall Warning")
-                LABELS="$LABELS,winter,snow-squall"
-                ;;
-            esac
+            if [ "$EVENT" = "Tornado Warning" ]; then
+              LABELS="$LABELS,tornado-warning"
+            elif [ "$EVENT" = "Severe Thunderstorm Warning" ]; then
+              LABELS="$LABELS,severe-warning"
+            elif [ "$EVENT" = "Tornado Watch" ]; then
+              LABELS="$LABELS,tornado-watch"
+            elif [ "$EVENT" = "Severe Thunderstorm Watch" ]; then
+              LABELS="$LABELS,severe-watch"
+            elif [ "$EVENT" = "Winter Storm Warning" ]; then
+              LABELS="$LABELS,winter,winter-storm-warning"
+            elif [ "$EVENT" = "Winter Storm Watch" ]; then
+              LABELS="$LABELS,winter,winter-storm-watch"
+            elif [ "$EVENT" = "Winter Weather Advisory" ]; then
+              LABELS="$LABELS,winter,winter-weather-advisory"
+            elif [ "$EVENT" = "Blizzard Warning" ]; then
+              LABELS="$LABELS,winter,blizzard"
+            elif [ "$EVENT" = "Ice Storm Warning" ]; then
+              LABELS="$LABELS,winter,ice-storm"
+            elif [ "$EVENT" = "Snow Squall Warning" ]; then
+              LABELS="$LABELS,winter,snow-squall"
+            fi
 
             echo "$DESC" | grep -qi "PDS" && LABELS="$LABELS,pds"
             echo "$DESC" | grep -qi "EMERGENCY" && LABELS="$LABELS,tornado-emergency"
