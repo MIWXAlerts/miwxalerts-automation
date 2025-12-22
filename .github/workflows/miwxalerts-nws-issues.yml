@@ -1,4 +1,4 @@
-name: MIWXAlerts — NWS Alerts to Issues
+name: MIWXAlerts — NWS Alerts to GitHub Issues
 
 on:
   schedule:
@@ -12,6 +12,10 @@ permissions:
 jobs:
   nws-alerts:
     runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        shell: bash
 
     steps:
       - uses: actions/checkout@v4
@@ -31,16 +35,16 @@ jobs:
           jq '
             .features
             | map(select(
-            .properties.event == "Severe Thunderstorm Warning" or
-            .properties.event == "Tornado Warning" or
-            .properties.event == "Severe Thunderstorm Watch" or
-            .properties.event == "Tornado Watch" or
-            .properties.event == "Winter Storm Warning" or
-            .properties.event == "Winter Storm Watch" or
-            .properties.event == "Winter Weather Advisory" or
-            .properties.event == "Blizzard Warning" or
-            .properties.event == "Ice Storm Warning" or
-            .properties.event == "Snow Squall Warning"
+                .properties.event == "Severe Thunderstorm Warning" or
+                .properties.event == "Tornado Warning" or
+                .properties.event == "Severe Thunderstorm Watch" or
+                .properties.event == "Tornado Watch" or
+                .properties.event == "Winter Storm Warning" or
+                .properties.event == "Winter Storm Watch" or
+                .properties.event == "Winter Weather Advisory" or
+                .properties.event == "Blizzard Warning" or
+                .properties.event == "Ice Storm Warning" or
+                .properties.event == "Snow Squall Warning"
             ))
           ' alerts.json > filtered.json
 
@@ -49,9 +53,6 @@ jobs:
           mkdir -p state
           [ -f state/active_alerts.json ] || echo "{}" > state/active_alerts.json
 
-      - name: Install GitHub CLI
-        run: sudo apt-get install -y gh    
-       
       - name: Ensure Labels Exist
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -59,37 +60,36 @@ jobs:
         run: |
           set -e
 
-          declare -A LABELS=(
-            ["nws-alert"]="0366d6"
-            ["tornado-warning"]="b60205"
-            ["tornado-watch"]="fbca04"
-            ["severe-warning"]="d93f0b"
-            ["severe-watch"]="f9d0c4"
-            ["pds"]="5319e7"
-            ["tornado-emergency"]="000000"
-            ["winter"]="0052cc"
-            ["winter-storm-warning"]="1d76db"
-            ["winter-weather-advisory"]="4c9aff"
-            ["blizzard"]="0b1c2d"
-            ["ice-storm"]="9ec5ff"
-            ["snow-squall"]="6f42c1"
+          declare -A LABEL_COLORS=(
+            [nws-alert]="0366d6"
+            [tornado-warning]="b60205"
+            [tornado-watch]="fbca04"
+            [severe-warning]="d93f0b"
+            [severe-watch]="f9d0c4"
+            [pds]="5319e7"
+            [tornado-emergency]="000000"
+            [winter]="0052cc"
+            [winter-storm-warning]="1d76db"
+            [winter-storm-watch]="84b6eb"
+            [winter-weather-advisory]="c5def5"
+            [blizzard]="002f6c"
+            [ice-storm]="5c2d91"
+            [snow-squall]="9be9ff"
           )
 
-          for LABEL in "${!LABELS[@]}"; do
+          for LABEL in "${!LABEL_COLORS[@]}"; do
             if ! gh label list \
               --repo "$REPO" \
               --search "$LABEL" \
               --json name \
               --jq '.[].name' | grep -qx "$LABEL"; then
 
-              echo "Creating label: $LABEL"
               gh label create "$LABEL" \
                 --repo "$REPO" \
-                --color "${LABELS[$LABEL]}" \
+                --color "${LABEL_COLORS[$LABEL]}" \
                 --description "MIWXAlerts automated label"
             fi
           done
-          
 
       - name: Process Alerts
         env:
@@ -97,7 +97,6 @@ jobs:
           REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          STATE_CHANGED=0
 
           jq -c '.[]' filtered.json | while read -r ALERT; do
             ID=$(echo "$ALERT" | jq -r '.id')
@@ -110,16 +109,36 @@ jobs:
             LABELS="nws-alert"
 
             case "$EVENT" in
-              "Tornado Warning") LABELS="$LABELS,tornado-warning" ;;
-              "Severe Thunderstorm Warning") LABELS="$LABELS,severe-warning" ;;
-              "Tornado Watch") LABELS="$LABELS,tornado-watch" ;;
-              "Severe Thunderstorm Watch") LABELS="$LABELS,severe-watch" ;;
-              "Winter Storm Warning") LABELS="$LABELS,winter,winter-storm-warning" ;;
-              "Winter Storm Watch") LABELS="$LABELS,winter,winter-storm-watch" ;;
-              "Winter Weather Advisory") LABELS="$LABELS,winter,winter-weather-advisory" ;;
-              "Blizzard Warning") LABELS="$LABELS,winter,blizzard" ;;
-              "Ice Storm Warning") LABELS="$LABELS,winter,ice-storm" ;;
-              "Snow Squall Warning") LABELS="$LABELS,winter,snow-squall" ;;
+              "Tornado Warning")
+                LABELS="$LABELS,tornado-warning"
+                ;;
+              "Severe Thunderstorm Warning")
+                LABELS="$LABELS,severe-warning"
+                ;;
+              "Tornado Watch")
+                LABELS="$LABELS,tornado-watch"
+                ;;
+              "Severe Thunderstorm Watch")
+                LABELS="$LABELS,severe-watch"
+                ;;
+              "Winter Storm Warning")
+                LABELS="$LABELS,winter,winter-storm-warning"
+                ;;
+              "Winter Storm Watch")
+                LABELS="$LABELS,winter,winter-storm-watch"
+                ;;
+              "Winter Weather Advisory")
+                LABELS="$LABELS,winter,winter-weather-advisory"
+                ;;
+              "Blizzard Warning")
+                LABELS="$LABELS,winter,blizzard"
+                ;;
+              "Ice Storm Warning")
+                LABELS="$LABELS,winter,ice-storm"
+                ;;
+              "Snow Squall Warning")
+                LABELS="$LABELS,winter,snow-squall"
+                ;;
             esac
 
             echo "$DESC" | grep -qi "PDS" && LABELS="$LABELS,pds"
@@ -150,15 +169,12 @@ jobs:
               gh issue comment \
                 --repo "$REPO" \
                 --issue "$ISSUE" \
-                --body "🔄 **Alert Update**\n\n$BODY"
+                --body "🔄 **Alert Update**"
             fi
 
-            if ! jq -e ".\"$ID\"" state/active_alerts.json >/dev/null; then
-              jq --arg id "$ID" --arg sent "$SENT" \
-                '.[$id] = {sent:$sent}' \
-                state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
-              STATE_CHANGED=1
-            fi
+            jq --arg id "$ID" --arg sent "$SENT" \
+              '.[$id] = {sent:$sent}' \
+              state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
           done
 
           for OLD_ID in $(jq -r 'keys[]' state/active_alerts.json); do
@@ -178,7 +194,6 @@ jobs:
               fi
 
               jq "del(.\"$OLD_ID\")" state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
-              STATE_CHANGED=1
             fi
           done
 
@@ -187,5 +202,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state/active_alerts.json
-          git commit -m "MIWXAlerts: update alert state"
+          git commit -m "MIWXAlerts: update alert state" || echo "No state changes"
           git push
