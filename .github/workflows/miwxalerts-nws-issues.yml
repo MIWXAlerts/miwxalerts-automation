@@ -1,0 +1,191 @@
+name: MIWXAlerts — NWS Alerts to Issues
+
+on:
+  schedule:
+    - cron: "*/3 * * * *"
+  workflow_dispatch: {}
+
+permissions:
+  issues: write
+  contents: write
+
+jobs:
+  nws-alerts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Fetch Michigan Alerts
+        run: |
+          curl -s \
+            -H "User-Agent: MIWXAlerts GitHub Automation (oodvgwx@outlook.com)" \
+            "https://api.weather.gov/alerts/active?area=MI" \
+            -o alerts.json
+
+      - name: Filter Qualifying Alerts
+        run: |
+          jq '
+            .features
+            | map(select(
+            .properties.event == "Severe Thunderstorm Warning" or
+            .properties.event == "Tornado Warning" or
+            .properties.event == "Severe Thunderstorm Watch" or
+            .properties.event == "Tornado Watch" or
+            .properties.event == "Winter Storm Warning" or
+            .properties.event == "Winter Storm Watch" or
+            .properties.event == "Winter Weather Advisory" or
+            .properties.event == "Blizzard Warning" or
+            .properties.event == "Ice Storm Warning" or
+            .properties.event == "Snow Squall Warning"
+            ))
+          ' alerts.json > filtered.json
+
+      - name: Load Previous State
+        run: |
+          mkdir -p state
+          [ -f state/active_alerts.json ] || echo "{}" > state/active_alerts.json
+
+      - name: Install GitHub CLI
+        run: sudo apt-get install -y gh    
+       
+      - name: Ensure Labels Exist
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -e
+
+          declare -A LABELS=(
+            ["nws-alert"]="0366d6"
+            ["tornado-warning"]="b60205"
+            ["tornado-watch"]="fbca04"
+            ["severe-warning"]="d93f0b"
+            ["severe-watch"]="f9d0c4"
+            ["pds"]="5319e7"
+            ["tornado-emergency"]="000000"
+            ["winter"]="0052cc"
+            ["winter-storm-warning"]="1d76db"
+            ["winter-weather-advisory"]="4c9aff"
+            ["blizzard"]="0b1c2d"
+            ["ice-storm"]="9ec5ff"
+            ["snow-squall"]="6f42c1"
+          )
+
+          for LABEL in "${!LABELS[@]}"; do
+            if ! gh label list \
+              --repo "$REPO" \
+              --search "$LABEL" \
+              --json name \
+              --jq '.[].name' | grep -qx "$LABEL"; then
+
+              echo "Creating label: $LABEL"
+              gh label create "$LABEL" \
+                --repo "$REPO" \
+                --color "${LABELS[$LABEL]}" \
+                --description "MIWXAlerts automated label"
+            fi
+          done
+          
+
+      - name: Process Alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          STATE_CHANGED=0
+
+          jq -c '.[]' filtered.json | while read -r ALERT; do
+            ID=$(echo "$ALERT" | jq -r '.id')
+            EVENT=$(echo "$ALERT" | jq -r '.properties.event')
+            DESC=$(echo "$ALERT" | jq -r '.properties.description')
+            SENT=$(echo "$ALERT" | jq -r '.properties.sent')
+            EXPIRES=$(echo "$ALERT" | jq -r '.properties.expires')
+            AREAS=$(echo "$ALERT" | jq -r '.properties.areaDesc')
+
+            LABELS="nws-alert"
+
+            case "$EVENT" in
+              "Tornado Warning") LABELS="$LABELS,tornado-warning" ;;
+              "Severe Thunderstorm Warning") LABELS="$LABELS,severe-warning" ;;
+              "Tornado Watch") LABELS="$LABELS,tornado-watch" ;;
+              "Severe Thunderstorm Watch") LABELS="$LABELS,severe-watch" ;;
+              "Winter Storm Warning") LABELS="$LABELS,winter,winter-storm-warning" ;;
+              "Winter Storm Watch") LABELS="$LABELS,winter,winter-storm-watch" ;;
+              "Winter Weather Advisory") LABELS="$LABELS,winter,winter-weather-advisory" ;;
+              "Blizzard Warning") LABELS="$LABELS,winter,blizzard" ;;
+              "Ice Storm Warning") LABELS="$LABELS,winter,ice-storm" ;;
+              "Snow Squall Warning") LABELS="$LABELS,winter,snow-squall" ;; ;;
+            esac
+
+            echo "$DESC" | grep -qi "PDS" && LABELS="$LABELS,pds"
+            echo "$DESC" | grep -qi "EMERGENCY" && LABELS="$LABELS,tornado-emergency"
+
+            BODY=$(printf "%s\n\n%s\n\n%s\n\n%s\n\n---\n\n%s\n\n---\n\n**NWS Alert ID:** \`%s\`" \
+              "**Event:** $EVENT" \
+              "**Areas:** $AREAS" \
+              "**Issued:** $SENT" \
+              "**Expires:** $EXPIRES" \
+              "$DESC" \
+              "$ID")
+
+            ISSUE=$(gh issue list \
+              --repo "$REPO" \
+              --search "NWS Alert ID: \`$ID\`" \
+              --state open \
+              --json number \
+              --jq '.[0].number')
+
+            if [ -z "$ISSUE" ]; then
+              gh issue create \
+                --repo "$REPO" \
+                --title "🚨 $EVENT — $AREAS" \
+                --body "$BODY" \
+                --label "$LABELS"
+            else
+              gh issue comment \
+                --repo "$REPO" \
+                --issue "$ISSUE" \
+                --body "🔄 **Alert Update**\n\n$BODY"
+            fi
+
+            if ! jq -e ".\"$ID\"" state/active_alerts.json >/dev/null; then
+              jq --arg id "$ID" --arg sent "$SENT" \
+                '.[$id] = {sent:$sent}' \
+                state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
+              STATE_CHANGED=1
+            fi
+          done
+
+          for OLD_ID in $(jq -r 'keys[]' state/active_alerts.json); do
+            if ! jq -r '.[].id' filtered.json | grep -q "$OLD_ID"; then
+              ISSUE=$(gh issue list \
+                --repo "$REPO" \
+                --search "NWS Alert ID: \`$OLD_ID\`" \
+                --state open \
+                --json number \
+                --jq '.[0].number')
+
+              if [ -n "$ISSUE" ]; then
+                gh issue close \
+                  --repo "$REPO" \
+                  --issue "$ISSUE" \
+                  --comment "✅ Alert expired or cancelled by NWS."
+              fi
+
+              jq "del(.\"$OLD_ID\")" state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
+              STATE_CHANGED=1
+            fi
+          done
+
+      - name: Save State
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add state/active_alerts.json
+          git commit -m "MIWXAlerts: update alert state"
+          git push
