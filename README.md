@@ -20,7 +20,7 @@ MIWXAlerts-Github tracks **severe** and **winter weather** alerts, including:
 
 ## ⚙️ How It Works
 
-- Runs automatically via **GitHub Actions** every **3 minutes** (We have to be API friendly)
+- Runs automatically via **GitHub Actions** every **5 minutes** (We have to be API friendly)
 - Pulls live alert data from the **NWS API** (`api.weather.gov`)
 - Filters qualifying Michigan alerts
 - Tracks alert state using official **NWS Alert IDs**
