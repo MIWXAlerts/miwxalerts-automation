@@ -119,7 +119,7 @@ jobs:
               "Winter Weather Advisory") LABELS="$LABELS,winter,winter-weather-advisory" ;;
               "Blizzard Warning") LABELS="$LABELS,winter,blizzard" ;;
               "Ice Storm Warning") LABELS="$LABELS,winter,ice-storm" ;;
-              "Snow Squall Warning") LABELS="$LABELS,winter,snow-squall" ;; ;;
+              "Snow Squall Warning") LABELS="$LABELS,winter,snow-squall" ;;
             esac
 
             echo "$DESC" | grep -qi "PDS" && LABELS="$LABELS,pds"
