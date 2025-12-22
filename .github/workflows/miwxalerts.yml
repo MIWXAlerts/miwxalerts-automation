@@ -2,7 +2,7 @@ name: MIWXAlerts — NWS Alerts to GitHub Issues
 
 on:
   schedule:
-    - cron: "*/3 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
 permissions:
