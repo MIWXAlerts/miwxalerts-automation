@@ -1,1 +1,8 @@
-{}
+{
+  "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.eaefc9abff05b5ae40a0d951703b06fe5d2faadd.001.1": {
+    "sent": "2025-12-25T02:03:00-05:00"
+  },
+  "https://api.weather.gov/alerts/urn:oid:2.49.0.1.840.0.eaefc9abff05b5ae40a0d951703b06fe5d2faadd.002.1": {
+    "sent": "2025-12-25T02:03:00-05:00"
+  }
+}
