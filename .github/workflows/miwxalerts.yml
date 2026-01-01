@@ -39,8 +39,8 @@ jobs:
             "https://api.weather.gov/alerts/active?area=MI" \
             -o alerts.json
 
-      - name: Extract ALL Active Alert IDs
-        run: jq -r '.features[].id' alerts.json > all_active_ids.txt
+      - name: Extract Active QUALIFYING Alert IDs
+        run: jq -r '.[].id' filtered.json > all_active_ids.txt
 
       - name: Filter Qualifying Alerts
         run: |
