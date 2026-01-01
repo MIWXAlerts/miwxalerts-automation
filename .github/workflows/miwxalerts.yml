@@ -98,6 +98,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
+          set -euo pipefail
+
           jq -c '.[]' filtered.json | while read -r A; do
             ID=$(jq -r '.id' <<<"$A")
             EVENT=$(jq -r '.properties.event' <<<"$A")
@@ -128,11 +130,13 @@ jobs:
 
             ISSUE=$(gh issue list --repo "$REPO" --search "$ID" --state open --json number --jq '.[0].number')
 
-            [ -z "$ISSUE" ] && gh issue create \
-              --repo "$REPO" \
-              --title "🚨 $EVENT — $AREAS [$ID]" \
-              --body "$BODY" \
-              --label "$LABELS"
+            if [ -z "$ISSUE" ]; then
+              gh issue create \
+                --repo "$REPO" \
+                --title "🚨 $EVENT — $AREAS [$ID]" \
+                --body "$BODY" \
+                --label "$LABELS"
+            fi
 
             jq --arg id "$ID" '.[$id]={}' state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
           done
@@ -147,8 +151,8 @@ jobs:
 
             ISSUE=$(gh issue list --repo "$REPO" --search "$ID" --state open --json number --jq '.[0].number')
             if [ -n "$ISSUE" ]; then
-              gh issue edit --repo "$REPO" --issue "$ISSUE" --add-label expired
-              gh issue close --repo "$REPO" --issue "$ISSUE" \
+              gh issue edit "$ISSUE" --repo "$REPO" --add-label expired
+              gh issue close "$ISSUE" --repo "$REPO" \
                 --comment "✅ Alert expired or cancelled by the National Weather Service."
             fi
 
