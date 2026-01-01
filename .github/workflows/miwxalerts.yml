@@ -24,17 +24,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y jq
+      - name: Verify GitHub CLI
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh --version
 
-      - name: Install GitHub CLI
-        run: |
-          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
-          sudo apt-add-repository https://cli.github.com/packages
-          sudo apt update
-          sudo apt install gh -y
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
 
       - name: Fetch Michigan Alerts
         run: |
@@ -43,11 +39,10 @@ jobs:
             "https://api.weather.gov/alerts/active?area=MI" \
             -o alerts.json
 
-      - name: Extract ALL Active Alert IDs (for lifecycle tracking)
-        run: |
-          jq -r '.features[].id' alerts.json > all_active_ids.txt
+      - name: Extract ALL Active Alert IDs
+        run: jq -r '.features[].id' alerts.json > all_active_ids.txt
 
-      - name: Filter Qualifying Alerts (for issue creation only)
+      - name: Filter Qualifying Alerts
         run: |
           jq '
             .features
@@ -75,9 +70,7 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          set -e
-
-          declare -A LABEL_COLORS=(
+          declare -A LABELS=(
             [nws-alert]="0366d6"
             [tornado-warning]="b60205"
             [tornado-watch]="fbca04"
@@ -95,13 +88,9 @@ jobs:
             [expired]="cfd3d7"
           )
 
-          for LABEL in "${!LABEL_COLORS[@]}"; do
-            if ! gh label list --repo "$REPO" --search "$LABEL" --json name --jq '.[].name' | grep -qx "$LABEL"; then
-              gh label create "$LABEL" \
-                --repo "$REPO" \
-                --color "${LABEL_COLORS[$LABEL]}" \
-                --description "MIWXAlerts automated label"
-            fi
+          for L in "${!LABELS[@]}"; do
+            gh label list --repo "$REPO" --search "$L" --json name --jq '.[].name' | grep -qx "$L" \
+              || gh label create "$L" --repo "$REPO" --color "${LABELS[$L]}" --description "MIWXAlerts"
           done
 
       - name: Process Active Alerts
@@ -109,18 +98,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          set -euo pipefail
-
-          jq -c '.[]' filtered.json | while read -r ALERT; do
-            ID=$(echo "$ALERT" | jq -r '.id')
-            EVENT=$(echo "$ALERT" | jq -r '.properties.event')
-            DESC=$(echo "$ALERT" | jq -r '.properties.description')
-            SENT=$(echo "$ALERT" | jq -r '.properties.sent')
-            EXPIRES=$(echo "$ALERT" | jq -r '.properties.expires')
-            AREAS=$(echo "$ALERT" | jq -r '.properties.areaDesc')
+          jq -c '.[]' filtered.json | while read -r A; do
+            ID=$(jq -r '.id' <<<"$A")
+            EVENT=$(jq -r '.properties.event' <<<"$A")
+            DESC=$(jq -r '.properties.description' <<<"$A")
+            SENT=$(jq -r '.properties.sent' <<<"$A")
+            EXPIRES=$(jq -r '.properties.expires' <<<"$A")
+            AREAS=$(jq -r '.properties.areaDesc' <<<"$A")
 
             LABELS="nws-alert"
-
             case "$EVENT" in
               "Tornado Warning") LABELS+=",tornado-warning" ;;
               "Severe Thunderstorm Warning") LABELS+=",severe-warning" ;;
@@ -134,35 +120,21 @@ jobs:
               "Snow Squall Warning") LABELS+=",winter,snow-squall" ;;
             esac
 
-            echo "$DESC" | grep -qi "PDS" && LABELS+=",pds"
-            echo "$DESC" | grep -qi "EMERGENCY" && LABELS+=",tornado-emergency"
+            echo "$DESC" | grep -qi PDS && LABELS+=",pds"
+            echo "$DESC" | grep -qi EMERGENCY && LABELS+=",tornado-emergency"
 
-            BODY=$(printf "%s\n\n%s\n\n%s\n\n%s\n\n---\n\n%s\n\n---\n\n**NWS Alert ID:** \`%s\`" \
-              "**Event:** $EVENT" \
-              "**Areas:** $AREAS" \
-              "**Issued:** $SENT" \
-              "**Expires:** $EXPIRES" \
-              "$DESC" \
-              "$ID")
+            BODY=$(printf "**Event:** %s\n\n**Areas:** %s\n\n**Issued:** %s\n**Expires:** %s\n\n---\n\n%s\n\n---\n\n**NWS Alert ID:** `%s`" \
+              "$EVENT" "$AREAS" "$SENT" "$EXPIRES" "$DESC" "$ID")
 
-            ISSUE=$(gh issue list \
+            ISSUE=$(gh issue list --repo "$REPO" --search "$ID" --state open --json number --jq '.[0].number')
+
+            [ -z "$ISSUE" ] && gh issue create \
               --repo "$REPO" \
-              --search "$ID" \
-              --state open \
-              --json number \
-              --jq '.[0].number')
+              --title "🚨 $EVENT — $AREAS [$ID]" \
+              --body "$BODY" \
+              --label "$LABELS"
 
-            if [ -z "$ISSUE" ]; then
-              gh issue create \
-                --repo "$REPO" \
-                --title "🚨 $EVENT — $AREAS [$ID]" \
-                --body "$BODY" \
-                --label "$LABELS"
-            fi
-
-            jq --arg id "$ID" --arg sent "$SENT" \
-              '.[$id] = {sent:$sent}' \
-              state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
+            jq --arg id "$ID" '.[$id]={}' state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
           done
 
       - name: Close Expired or Cancelled Alerts
@@ -170,25 +142,17 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
         run: |
-          for OLD_ID in $(jq -r 'keys[]' state/active_alerts.json); do
-            if ! grep -q "$OLD_ID" all_active_ids.txt; then
-              ISSUE=$(gh issue list \
-                --repo "$REPO" \
-                --search "$OLD_ID" \
-                --state open \
-                --json number \
-                --jq '.[0].number')
+          for ID in $(jq -r 'keys[]' state/active_alerts.json); do
+            grep -q "$ID" all_active_ids.txt && continue
 
-              if [ -n "$ISSUE" ]; then
-                gh issue edit --repo "$REPO" --issue "$ISSUE" --add-label expired
-                gh issue close \
-                  --repo "$REPO" \
-                  --issue "$ISSUE" \
-                  --comment "✅ Alert expired or cancelled by the National Weather Service."
-              fi
-
-              jq "del(.\"$OLD_ID\")" state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
+            ISSUE=$(gh issue list --repo "$REPO" --search "$ID" --state open --json number --jq '.[0].number')
+            if [ -n "$ISSUE" ]; then
+              gh issue edit --repo "$REPO" --issue "$ISSUE" --add-label expired
+              gh issue close --repo "$REPO" --issue "$ISSUE" \
+                --comment "✅ Alert expired or cancelled by the National Weather Service."
             fi
+
+            jq "del(.\"$ID\")" state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
           done
 
       - name: Save State
