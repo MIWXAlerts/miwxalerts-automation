@@ -5,6 +5,10 @@ on:
     - cron: "*/5 * * * *"
   workflow_dispatch: {}
 
+concurrency:
+  group: miwxalerts
+  cancel-in-progress: true
+
 permissions:
   issues: write
   contents: write
@@ -21,7 +25,16 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Install dependencies
-        run: sudo apt-get update && sudo apt-get install -y jq
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq
+
+      - name: Install GitHub CLI
+        run: |
+          sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-key C99B11DEB97541F0
+          sudo apt-add-repository https://cli.github.com/packages
+          sudo apt update
+          sudo apt install gh -y
 
       - name: Fetch Michigan Alerts
         run: |
@@ -30,7 +43,11 @@ jobs:
             "https://api.weather.gov/alerts/active?area=MI" \
             -o alerts.json
 
-      - name: Filter Qualifying Alerts
+      - name: Extract ALL Active Alert IDs (for lifecycle tracking)
+        run: |
+          jq -r '.features[].id' alerts.json > all_active_ids.txt
+
+      - name: Filter Qualifying Alerts (for issue creation only)
         run: |
           jq '
             .features
@@ -75,6 +92,7 @@ jobs:
             [blizzard]="002f6c"
             [ice-storm]="5c2d91"
             [snow-squall]="9be9ff"
+            [expired]="cfd3d7"
           )
 
           for LABEL in "${!LABEL_COLORS[@]}"; do
@@ -86,7 +104,7 @@ jobs:
             fi
           done
 
-      - name: Process Alerts
+      - name: Process Active Alerts
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
@@ -103,30 +121,21 @@ jobs:
 
             LABELS="nws-alert"
 
-            if [ "$EVENT" = "Tornado Warning" ]; then
-              LABELS="$LABELS,tornado-warning"
-            elif [ "$EVENT" = "Severe Thunderstorm Warning" ]; then
-              LABELS="$LABELS,severe-warning"
-            elif [ "$EVENT" = "Tornado Watch" ]; then
-              LABELS="$LABELS,tornado-watch"
-            elif [ "$EVENT" = "Severe Thunderstorm Watch" ]; then
-              LABELS="$LABELS,severe-watch"
-            elif [ "$EVENT" = "Winter Storm Warning" ]; then
-              LABELS="$LABELS,winter,winter-storm-warning"
-            elif [ "$EVENT" = "Winter Storm Watch" ]; then
-              LABELS="$LABELS,winter,winter-storm-watch"
-            elif [ "$EVENT" = "Winter Weather Advisory" ]; then
-              LABELS="$LABELS,winter,winter-weather-advisory"
-            elif [ "$EVENT" = "Blizzard Warning" ]; then
-              LABELS="$LABELS,winter,blizzard"
-            elif [ "$EVENT" = "Ice Storm Warning" ]; then
-              LABELS="$LABELS,winter,ice-storm"
-            elif [ "$EVENT" = "Snow Squall Warning" ]; then
-              LABELS="$LABELS,winter,snow-squall"
-            fi
+            case "$EVENT" in
+              "Tornado Warning") LABELS+=",tornado-warning" ;;
+              "Severe Thunderstorm Warning") LABELS+=",severe-warning" ;;
+              "Tornado Watch") LABELS+=",tornado-watch" ;;
+              "Severe Thunderstorm Watch") LABELS+=",severe-watch" ;;
+              "Winter Storm Warning") LABELS+=",winter,winter-storm-warning" ;;
+              "Winter Storm Watch") LABELS+=",winter,winter-storm-watch" ;;
+              "Winter Weather Advisory") LABELS+=",winter,winter-weather-advisory" ;;
+              "Blizzard Warning") LABELS+=",winter,blizzard" ;;
+              "Ice Storm Warning") LABELS+=",winter,ice-storm" ;;
+              "Snow Squall Warning") LABELS+=",winter,snow-squall" ;;
+            esac
 
-            echo "$DESC" | grep -qi "PDS" && LABELS="$LABELS,pds"
-            echo "$DESC" | grep -qi "EMERGENCY" && LABELS="$LABELS,tornado-emergency"
+            echo "$DESC" | grep -qi "PDS" && LABELS+=",pds"
+            echo "$DESC" | grep -qi "EMERGENCY" && LABELS+=",tornado-emergency"
 
             BODY=$(printf "%s\n\n%s\n\n%s\n\n%s\n\n---\n\n%s\n\n---\n\n**NWS Alert ID:** \`%s\`" \
               "**Event:** $EVENT" \
@@ -138,7 +147,7 @@ jobs:
 
             ISSUE=$(gh issue list \
               --repo "$REPO" \
-              --search "NWS Alert ID: \`$ID\`" \
+              --search "$ID" \
               --state open \
               --json number \
               --jq '.[0].number')
@@ -146,14 +155,9 @@ jobs:
             if [ -z "$ISSUE" ]; then
               gh issue create \
                 --repo "$REPO" \
-                --title "🚨 $EVENT — $AREAS" \
+                --title "🚨 $EVENT — $AREAS [$ID]" \
                 --body "$BODY" \
                 --label "$LABELS"
-            else
-              gh issue comment \
-                --repo "$REPO" \
-                --issue "$ISSUE" \
-                --body "🔄 **Alert Update**"
             fi
 
             jq --arg id "$ID" --arg sent "$SENT" \
@@ -161,20 +165,26 @@ jobs:
               state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
           done
 
+      - name: Close Expired or Cancelled Alerts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REPO: ${{ github.repository }}
+        run: |
           for OLD_ID in $(jq -r 'keys[]' state/active_alerts.json); do
-            if ! jq -r '.[].id' filtered.json | grep -q "$OLD_ID"; then
+            if ! grep -q "$OLD_ID" all_active_ids.txt; then
               ISSUE=$(gh issue list \
                 --repo "$REPO" \
-                --search "NWS Alert ID: \`$OLD_ID\`" \
+                --search "$OLD_ID" \
                 --state open \
                 --json number \
                 --jq '.[0].number')
 
               if [ -n "$ISSUE" ]; then
+                gh issue edit --repo "$REPO" --issue "$ISSUE" --add-label expired
                 gh issue close \
                   --repo "$REPO" \
                   --issue "$ISSUE" \
-                  --comment "✅ Alert expired or cancelled by NWS."
+                  --comment "✅ Alert expired or cancelled by the National Weather Service."
               fi
 
               jq "del(.\"$OLD_ID\")" state/active_alerts.json > state/tmp.json && mv state/tmp.json state/active_alerts.json
@@ -186,5 +196,5 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add state/active_alerts.json
-          git commit -m "MIWXAlerts: update alert state" || echo "No state changes"
+          git diff --quiet || git commit -m "MIWXAlerts: update alert state"
           git push
