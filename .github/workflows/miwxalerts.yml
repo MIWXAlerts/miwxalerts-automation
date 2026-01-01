@@ -40,23 +40,24 @@ jobs:
             -o alerts.json
 
 
-      -- name: Filter Qualifying Alerts
-  run: |
-    jq '
-      .features
-      | map(select(
-          .properties.event == "Severe Thunderstorm Warning" or
-          .properties.event == "Tornado Warning" or
-          .properties.event == "Severe Thunderstorm Watch" or
-          .properties.event == "Tornado Watch" or
-          .properties.event == "Winter Storm Warning" or
-          .properties.event == "Winter Storm Watch" or
-          .properties.event == "Winter Weather Advisory" or
-          .properties.event == "Blizzard Warning" or
-          .properties.event == "Ice Storm Warning" or
-          .properties.event == "Snow Squall Warning"
-      ))
-    ' alerts.json > filtered.json || echo "[]" > filtered.json
+
+      - name: Filter Qualifying Alerts
+        run: |
+            jq '
+            .features
+            | map(select(
+            .properties.event == "Severe Thunderstorm Warning" or
+            .properties.event == "Tornado Warning" or
+            .properties.event == "Severe Thunderstorm Watch" or
+            .properties.event == "Tornado Watch" or
+            .properties.event == "Winter Storm Warning" or
+            .properties.event == "Winter Storm Watch" or
+            .properties.event == "Winter Weather Advisory" or
+            .properties.event == "Blizzard Warning" or
+            .properties.event == "Ice Storm Warning" or
+            .properties.event == "Snow Squall Warning"
+            ))
+            ' alerts.json > filtered.json || echo "[]" > filtered.json
 
       - name: Extract Active Qualifying IDs
         run: |
