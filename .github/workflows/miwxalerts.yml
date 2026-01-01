@@ -39,26 +39,28 @@ jobs:
             "https://api.weather.gov/alerts/active?area=MI" \
             -o alerts.json
 
-      - name: Extract Active QUALIFYING Alert IDs
-        run: jq -r '.[].id' filtered.json > all_active_ids.txt
 
-      - name: Filter Qualifying Alerts
+      -- name: Filter Qualifying Alerts
+  run: |
+    jq '
+      .features
+      | map(select(
+          .properties.event == "Severe Thunderstorm Warning" or
+          .properties.event == "Tornado Warning" or
+          .properties.event == "Severe Thunderstorm Watch" or
+          .properties.event == "Tornado Watch" or
+          .properties.event == "Winter Storm Warning" or
+          .properties.event == "Winter Storm Watch" or
+          .properties.event == "Winter Weather Advisory" or
+          .properties.event == "Blizzard Warning" or
+          .properties.event == "Ice Storm Warning" or
+          .properties.event == "Snow Squall Warning"
+      ))
+    ' alerts.json > filtered.json || echo "[]" > filtered.json
+
+      - name: Extract Active Qualifying IDs
         run: |
-          jq '
-            .features
-            | map(select(
-                .properties.event == "Severe Thunderstorm Warning" or
-                .properties.event == "Tornado Warning" or
-                .properties.event == "Severe Thunderstorm Watch" or
-                .properties.event == "Tornado Watch" or
-                .properties.event == "Winter Storm Warning" or
-                .properties.event == "Winter Storm Watch" or
-                .properties.event == "Winter Weather Advisory" or
-                .properties.event == "Blizzard Warning" or
-                .properties.event == "Ice Storm Warning" or
-                .properties.event == "Snow Squall Warning"
-            ))
-          ' alerts.json > filtered.json
+          jq -r '.[].id' filtered.json > all_active_ids.txt    
 
       - name: Load Previous State
         run: |
@@ -130,7 +132,7 @@ jobs:
 
             ISSUE=$(gh issue list \
               --repo "$REPO" \
-              --search "[$ID]" \
+              --search "$ID" \
               --state open \
               --json number \
               --jq '.[0].number')
